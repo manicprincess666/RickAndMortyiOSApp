@@ -1,0 +1,51 @@
+name: Build IPA
+
+on:
+  push:
+  workflow_dispatch:
+    inputs:
+      ios_target:
+        description: "Minimum iOS version (repo default is 16.2)"
+        default: "15.0"
+        required: true
+
+jobs:
+  build:
+    runs-on: macos-15
+    env:
+      IOS_TARGET: ${{ inputs.ios_target || '15.0' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch project for older iOS
+        run: |
+          sed -i '' "s/IPHONEOS_DEPLOYMENT_TARGET = 16.2;/IPHONEOS_DEPLOYMENT_TARGET = $IOS_TARGET;/g" RickAndMorty.xcodeproj/project.pbxproj
+          # "list.clipboard" only exists on iOS 16+, swap it for an iOS 13+ symbol
+          sed -i '' 's/"list.clipboard"/"doc.on.clipboard"/' RickAndMorty/ViewModels/Settings/RMSettingsOption.swift
+          grep -n IPHONEOS_DEPLOYMENT_TARGET RickAndMorty.xcodeproj/project.pbxproj
+          xcodebuild -version
+
+      - name: Build (no signing)
+        run: |
+          xcodebuild build \
+            -project RickAndMorty.xcodeproj \
+            -target RickAndMorty \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
+
+      - name: Package .ipa (ad-hoc signed)
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/RickAndMorty.app Payload/
+          codesign --force --sign - --timestamp=none Payload/RickAndMorty.app
+          zip -qry RickAndMorty.ipa Payload
+          ls -lh RickAndMorty.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: RickAndMorty-ipa
+          path: RickAndMorty.ipa
